@@ -3,44 +3,49 @@ import base64
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
+
 def unshift_bytes(data: bytes, shift: int) -> bytes:
     return bytes((b - shift) % 256 for b in data)
 
-def aes_decrypt_bytes(key: bytes, iv: bytes, ct: bytes):
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    pt = unpad(cipher.decrypt(ct), AES.block_size)
-    return pt
 
-def decrypt_file(enc_path: str, key_path: str, output_dir: str = "decrypted"):
-    # Read encrypted file
-    with open(enc_path, "rb") as ef:
-        header = ef.read(1)
-        if len(header) < 1:
-            raise ValueError("Encrypted file corrupted (no shift header).")
-        shift_val = header[0]
-        iv = ef.read(16)
-        ct = ef.read()
+def decrypt_file(enc_path: str, key_path: str, output_dir="decrypted"):
+    try:
+        # Read encrypted file
+        with open(enc_path, "rb") as ef:
+            shift_byte = ef.read(1)
+            if not shift_byte:
+                raise ValueError("Missing shift byte.")
 
-    # Read AES key
-    with open(key_path, "rb") as kf:
-        key = base64.b64decode(kf.read())
+            shift = shift_byte[0]
+            iv = ef.read(16)
+            ct = ef.read()
 
-    # Decrypt AES
-    plain_shifted = aes_decrypt_bytes(key, iv, ct)
+        # Load AES key
+        with open(key_path, "rb") as kf:
+            key = base64.b64decode(kf.read())
+        if len(key) not in (16, 24, 32):
+            raise ValueError("Invalid AES key length.")
 
-    # Unshift bytes
-    unshifted = unshift_bytes(plain_shifted, shift_val)
+        # AES decryption
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        plain_shifted = unpad(cipher.decrypt(ct), AES.block_size)
 
-    # Save decrypted file
-    os.makedirs(output_dir, exist_ok=True)
-    base = os.path.basename(enc_path)
-    # remove .encrypted extension if present
-    if base.endswith(".encrypted"):
-        base = base[:-10]
-    out_path = os.path.join(output_dir, base + "_decrypted")
+        # Reverse shift
+        plain = unshift_bytes(plain_shifted, shift)
 
-    with open(out_path, "wb") as of:
-        of.write(unshifted)
+        # Save output
+        os.makedirs(output_dir, exist_ok=True)
+        base = os.path.basename(enc_path)
+        if base.endswith(".encrypted"):
+            base = base[:-10]
 
-    print(f"File decrypted and saved to: {out_path}")
-    return out_path
+        out_file = os.path.join(output_dir, base)
+        with open(out_file, "wb") as f:
+            f.write(plain)
+
+        print(f"✔ File decrypted: {out_file}")
+        return out_file
+
+    except Exception as e:
+        print(f"❌ Decryption failed: {e}")
+        return None
